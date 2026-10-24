@@ -1,0 +1,19 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "minimumReleaseAge": "7 days",
+  "lockFileMaintenance": {
+    "description": "flake.lock belongs to the update app, which applies the cooldown.",
+    "enabled": false
+  },
+  "nix": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "description": "NixOS channel bumps (nixos-YY.MM) come from git refs, which have no release timestamp. With the default timestamp-required, Renovate would never consider them stable.",
+      "matchManagers": ["nix"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    }
+  ]
+}

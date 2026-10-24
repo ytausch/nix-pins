@@ -2,11 +2,29 @@
   description = "Third-party flakes, pinned after a 7-day cooldown";
 
   inputs = {
+    # Not cooled down: it only exists so that the flakes below share one
+    # nixpkgs. Consumers replace it with their own (`pins.inputs.nixpkgs.follows`).
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+
+    pyproject-nix = {
+      url = "github:pyproject-nix/pyproject.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    uv2nix = {
+      url = "github:pyproject-nix/uv2nix";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    pyproject-build-systems = {
+      url = "github:pyproject-nix/build-system-pkgs";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.uv2nix.follows = "uv2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
-    { self, nixpkgs }:
+    { self, nixpkgs, ... }:
     let
       systems = [
         "x86_64-linux"

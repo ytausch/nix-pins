@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+
+      # Tests select.jq and builds the update app, which runs shellcheck.
+      - name: Flake checks
+        run: nix flake check --print-build-logs
+
+      - name: Formatting
+        run: nix fmt -- --check flake.nix update/*.nix
+
+      # Linters from the flake's pinned nixpkgs, not the registry's.
+      - name: Lint workflows
+        run: |
+          nix run --inputs-from . nixpkgs#actionlint
+          nix run --inputs-from . nixpkgs#zizmor -- --no-progress --offline .github/workflows
+
+      # Exercises the GitHub API calls without changing anything.
+      - name: Update (dry run)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: "1"
+        run: nix run .#update

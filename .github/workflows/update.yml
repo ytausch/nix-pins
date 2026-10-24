@@ -1,0 +1,100 @@
+name: Update pins
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+    inputs:
+      cooldown-days:
+        description: Minimum age of a push in days (0 for an urgent update)
+        type: number
+        default: 7
+      inputs:
+        description: Inputs to update, space-separated (empty for all)
+        type: string
+        default: ""
+
+# Everything, including the push, uses the GitHub App's token below.
+permissions: {}
+
+concurrency:
+  group: update-pins
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - name: Report start
+        env:
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+        run: |
+          if [[ -z $HEALTHCHECK_URL ]]; then
+            echo "::error::The HEALTHCHECK_URL secret is not set"
+            exit 1
+          fi
+          curl -fsS -m 10 --retry 5 -o /dev/null "$HEALTHCHECK_URL/start" ||
+            echo "::warning::Could not reach healthchecks.io"
+
+      - name: Create App token
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.PINS_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.PINS_BOT_PRIVATE_KEY }}
+          permission-contents: write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ steps.app.outputs.token }}
+          persist-credentials: true # needed for the push below
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+
+      # Dispatch inputs go through the environment, never into the script text.
+      # A scheduled run has no inputs, so COOLDOWN_DAYS is empty and the app
+      # uses its default of 7; `inputs.cooldown-days || 7` would turn 0 into 7.
+      - name: Update pins
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          COOLDOWN_DAYS: ${{ inputs.cooldown-days }}
+          INPUTS: ${{ inputs.inputs }}
+        run: |
+          read -ra inputs <<<"$INPUTS"
+          SUMMARY_FILE="$RUNNER_TEMP/summary.md" nix run .#update -- "${inputs[@]}"
+
+      - name: Commit and push
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+        run: |
+          if git diff --quiet flake.lock; then
+            echo "Nothing to update"
+            exit 0
+          fi
+          summary="$RUNNER_TEMP/summary.md"
+          cat "$summary" >>"$GITHUB_STEP_SUMMARY"
+          # Commit as the App's bot user, so GitHub attributes the commit to it.
+          bot="${APP_SLUG}[bot]"
+          bot_id=$(gh api "users/$bot" --jq .id)
+          git config user.name "$bot"
+          git config user.email "$bot_id+$bot@users.noreply.github.com"
+          { echo "Update pins"; echo; cat "$summary"; } | git commit -F - flake.lock
+          git push
+
+      - name: Report success
+        env:
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+        run: |
+          curl -fsS -m 10 --retry 5 -o /dev/null "$HEALTHCHECK_URL" ||
+            echo "::warning::Could not reach healthchecks.io"
+      - name: Report failure
+        if: failure()
+        env:
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+        run: |
+          [[ -n $HEALTHCHECK_URL ]] || exit 0
+          curl -fsS -m 10 --retry 5 -o /dev/null "$HEALTHCHECK_URL/fail" ||
+            echo "::warning::Could not reach healthchecks.io"
